@@ -3,5 +3,9 @@ build/*
 mesh.mphtxt
 Potential.txt
 .vscode/
-figures/*
+figures
 timekeeping.txt
+originals
+ppp/size_no_sc_combined.txt
+ppp/size_sc_combined.txt
+ppp/plots/*

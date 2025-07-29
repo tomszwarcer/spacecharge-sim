@@ -10,6 +10,7 @@
 #include <TROOT.h>
 #include <TSystem.h>
 #include <TApplication.h>
+
 #include <vector>
 #include <iomanip>
 #include <string>
@@ -24,12 +25,14 @@
 #include "Garfield/AvalancheGridSpaceCharge.hh"
 #include "Garfield/AvalancheMC.hh"
 #include "Garfield/ViewDrift.hh"
+#include "Garfield/ViewFEMesh.hh"
 #include "Garfield/ComponentComsol.hh"
 #include "Garfield/ComponentParallelPlate.hh"
 #include "Garfield/ViewSignal.hh"
 #include "Garfield/ViewField.hh"
 #include "Garfield/TrackHeed.hh"
 #include "Garfield/Random.hh"
+#include "Garfield/ComponentAnalyticField.hh"
 
 
 #define LOG(x) std::cout<<x<<std::endl
@@ -45,9 +48,6 @@ MediumMagboltz gas;
 double tmin = 0.;
 double timestep = 0.05;
 
-constexpr bool enable_penning = false;
-double rPenning = 0.42; // from Penning transfer in argon-based gas mixtures, O Sahin et al (2010) 
-
 std::vector<double> mean_pos = {0.,0.,0.};
 int particle_count = 0;
 
@@ -59,7 +59,8 @@ void userHandleAttachment(double x, double y, double z, double t, int type, int 
     drift.AddNegativeIon(x,y,z,tmin + timestep);
 }
 
-void add_electrons_to_grid(bool & electrons_remaining,const double & zmax){
+int add_electrons_to_grid(bool & electrons_remaining,const double & zmax){
+    int ne = 0;
     for (const auto& electron : aval.GetElectrons()) {
         // get electron positions
         double xf = electron.path.back().x;
@@ -69,6 +70,7 @@ void add_electrons_to_grid(bool & electrons_remaining,const double & zmax){
         int status = electron.status;
         // if still in a drift medium or at the end of timestep:
         if (status==0 || status == -17){
+	        ne++;
             electrons_remaining = true;
             if (yf < zmax){
                 particle_count++;
@@ -79,10 +81,11 @@ void add_electrons_to_grid(bool & electrons_remaining,const double & zmax){
             }
         }
     }
+    return ne;
 }
 
-
-void add_ions_to_grid(bool & ions_remaining,const double &zmax){
+int add_ions_to_grid(bool & ions_remaining,const double &zmax){
+    int ni= 0;
     for (const auto& ion : drift.GetIons()){
         double xf = ion.path.back().x;
         double yf = ion.path.back().y;
@@ -92,6 +95,7 @@ void add_ions_to_grid(bool & ions_remaining,const double &zmax){
         int status = ion.status;
 
         if (status==0 || status == -17){
+            ni++;
             ions_remaining = true;
             if (yf < zmax){
                 particle_count++;
@@ -102,9 +106,11 @@ void add_ions_to_grid(bool & ions_remaining,const double &zmax){
             } 
         }
     }
+    return ni;
 }
 
-void add_negative_ions_to_grid(bool & ions_remaining,const double &zmax){
+int add_negative_ions_to_grid(bool & ions_remaining,const double &zmax){
+    int ni=0;
     for (const auto& ion : drift.GetNegativeIons()){
         double xf = ion.path.back().x;
         double yf = ion.path.back().y;
@@ -113,6 +119,7 @@ void add_negative_ions_to_grid(bool & ions_remaining,const double &zmax){
         int status = ion.status;
 
         if (status==0 || status == -17){
+	    ni++;
             ions_remaining = true;
             if (yf < zmax) {
                 avalsc.AddNegativeIon(xf,yf,zf,tmin,1);
@@ -123,35 +130,29 @@ void add_negative_ions_to_grid(bool & ions_remaining,const double &zmax){
             }
         }
     }
+    return ni;
 }
 
 int main(int argc, char * argv[]){
 
+    constexpr bool plotDrift = false;
+    constexpr bool plotField = false;
+
     TApplication app("app", &argc, argv);
 
-    std::ofstream ion_pos;
-    ion_pos.open("ion_pos.txt");
-    std::ofstream dfile;
-    dfile.open("filenames_drift.txt");
-    std::ofstream ffile;
-    ffile.open("filenames_field.txt");
-        
-    plottingEngine.SetDefaultStyle();
-    
+
+    int run_number = std::atoi(argv[1]);
+    std::string s_run_number = argv[1];
+    int i_dv = std::atoi(argv[2]);
+    double dv = std::atof(argv[2]);
+    std::string s_dv = std::to_string(i_dv);
+    dv = -1*dv;
+    s_dv = "_"+s_dv;
+    std::ofstream size;
     constexpr bool debug = false;
-    constexpr bool plotDrift = true;
     constexpr bool plotSignal = false;
-    constexpr bool plotField = true;
-    constexpr bool enableSpaceCharge = true;
-    
-    // Defining the field map.
-    // Load the field map.
-    ComponentComsol fm;
-    fm.Initialise("mesh.mphtxt","dielectrics.dat","Potential.txt", "mm");
-    fm.EnablePeriodicityX();
-    fm.EnablePeriodicityZ();
-    fm.PrintRange();
-   // fm.EnableConvergenceWarnings(false);
+    constexpr bool enableSpaceCharge = false;
+    constexpr bool enable_penning = true;
 
     
     // Setup the gas.
@@ -165,59 +166,41 @@ int main(int argc, char * argv[]){
     if (enable_penning) gas.EnablePenningTransfer();
     
     // Load the ion mobilities.
-    const std::string path = std::getenv("GARFIELD_INSTALL");
-    gas.LoadIonMobility(path + "/share/Garfield/Data/IonMobility_Ar+_Ar.txt");
-    
-    const unsigned int nMaterials = fm.GetNumberOfMaterials();
-    LOG("GetNumberOfMaterials = "<< nMaterials);
-    for (unsigned int i = 0; i < nMaterials; ++i) {
-        const double eps = fm.GetPermittivity(i);
-        LOG("eps = "<< eps);
-        if(eps==1) fm.SetMedium(i, &gas);
-    }
-    fm.PrintMaterials();
+    gas.LoadIonMobility("/afs/cern.ch/work/t/tszwarce/garfieldpp/install/share/Garfield/Data/IonMobility_Ar+_Ar.txt");
 
     constexpr double pitch = 200.e-4; //cm
     constexpr double halfpitch = 0.5 * pitch;
 
-    ComponentParallelPlate cmp;
-    if (enableSpaceCharge) cmp.EnableSpaceCharge();
-    cmp.SetMedium(&gas);
+    ComponentParallelPlate sc;
+    std::string path_end = ".txt";
+    if (enableSpaceCharge){
+        sc.EnableSpaceCharge();
+        std::string path_begin = "/afs/cern.ch/work/t/tszwarce/ppp/gain_output/on/size_sc_";
+        
+        size.open(path_begin+s_run_number+s_dv+path_end);
+    }
+    else{
+        std::string path_begin = "/afs/cern.ch/work/t/tszwarce/ppp/gain_output/off/size_no_sc_";
+        size.open(path_begin+s_run_number+s_dv+path_end);
+    }   
+    sc.SetMedium(&gas);
+
+    
 
     // Create the sensor.
     Sensor sensor;
-    sensor.AddComponent(&fm);
-    // for(int i = 0;i<5;i++) sensor.AddElectrode(&wField, label[i]);
 
 
-    TCanvas* cfield = new TCanvas("cfield", "", 600, 600);
-    ViewField fieldView;
-    if (plotField) {
-        
-        fieldView.SetComponent(&cmp);
-        //fieldView.SetSensor(&sensor);
-        // Set the normal vector of the viewing plane (xz plane).
-        fieldView.SetPlane(0., 0., 1., 0., 0., 0);
-        fieldView.SetArea(-pitch, 0, pitch, 0.02);        
-        cfield->SetLeftMargin(0.16);
-        fieldView.SetCanvas(cfield);
-        fieldView.EnableAutoRange(false,false);
-        fieldView.SetElectricFieldRange(1.e-3,1.e2);
-        //      fieldView.PlotContour();
-    }
-    
     if(debug) sensor.EnableDebugging();
     
     //AvalancheMicroscopic aval;
     aval.SetSensor(&sensor);
-    aval.EnableSignalCalculation();
     aval.SetUserHandleIonisation(userHandleIonisation);
     aval.SetUserHandleAttachment(userHandleAttachment);
     if(debug) aval.EnableDebugging();
     
     //AvalancheMC drift;
     drift.SetSensor(&sensor);
-    //drift.SetDistanceSteps(1e-4);
     drift.EnableSignalCalculation();
     drift.SetTimeSteps(timestep);
     if(debug) drift.EnableDebugging();
@@ -228,24 +211,9 @@ int main(int argc, char * argv[]){
     
     if (enableSpaceCharge) avalsc.EnableSpaceChargeEffect();
     
-    ViewDrift driftView;
-    TCanvas* cd = new TCanvas();
-    if (plotDrift) {
-        aval.EnablePlotting(&driftView);
-        drift.EnablePlotting(&driftView);
-        driftView.SetCollisionMarkerSize(0.0000001);
-        driftView.SetColourIonisations(7);
-        // track.EnablePlotting(&driftView);
-        driftView.SetPlane(0, 0, 1, 0, 0, 0);
-        driftView.SetArea(-pitch, 0, pitch, 0.02);
-        driftView.SetCanvas(cd);
-        constexpr bool twod = true;
-    }
-
-
   // We create a fake RPC which is just a gas gap with dV = 0
   // This fake RPC lives under the mesh of the micromegas.
-  const double mesh_pos = 0.012;
+  const double mesh_pos = 0.0128;
   const double anode_pos = 0.;
   double d_gas = mesh_pos - anode_pos; // cm
   double d_top = 0.;
@@ -257,16 +225,21 @@ int main(int argc, char * argv[]){
   double e_bottom = 2.;
   std::vector<double> eps = {e_gas,e_bottom};
   double voltage = 0.;
-  cmp.Setup(int(layers.size()), eps, layers, voltage, {});
+  sc.Setup(int(layers.size()), eps, layers, voltage, {});
   
-  cmp.SetAvalancheGridSpaceChargeObject(&avalsc);
-  sensor.AddComponent(&cmp);
-  
-  
+  sc.SetAvalancheGridSpaceChargeObject(&avalsc);
+  sensor.AddComponent(&sc);
+
+  ComponentAnalyticField pp;
+  pp.SetMedium(&gas);
+  pp.AddPlaneY(anode_pos, 0.);
+  pp.AddPlaneY(mesh_pos, dv);
+  sensor.AddComponent(&pp);
+
 
   // Starting parameters for the electron
   const double x0 = 0.0;
-  const double y0 = 0.013; // mesh is at y=0.012 more or less
+  const double y0 = 0.012; // mesh is at y=0.012 more or less
   const double z0 = 0.;
   const double t0 = 0.;
   const double e0 = 0.1;
@@ -284,30 +257,55 @@ int main(int argc, char * argv[]){
 
   
   // set number of steps
-  const int N_timesteps = 50;
+  const int N_timesteps = 40;
 
   bool electrons_remaining;
   bool ions_remaining;
-  double xf,yf,zf,tf,xi,yi,zi,ti;
-  int status;
-  double tol = 1e-5;
   int ne,ni;
-  int counter = 0;  
 
-  /*
-  Medium * medi = sensor.GetMedium(0.004,0.004,0.);
-  int stat;
-  double ex,ey,ez;*/
-  
-  
+    /* TCanvas* cmsh = new TCanvas("cfield", "", 600, 600);
+    ViewFEMesh meshView;
+    meshView.SetPlane(0., 0., 1., 0., 0., 0);
+    meshView.SetArea(-pitch, 0, pitch, 0.02);  
+    meshView.SetComponent(&fm);
+    meshView.SetCanvas(cmsh);
+    meshView.SetFillMesh(true);
+    meshView.EnableAxes();
+    meshView.Plot();
+    cmsh->SaveAs("test.png"); */
+
+    TCanvas* cfield = new TCanvas("cfield", "", 600, 600);
+    ViewField fieldView;
+    if (plotField) {
+        fieldView.SetComponent(&pp);
+        //fieldView.SetSensor(&sensor);
+        // Set the normal vector of the viewing plane (xz plane).
+        fieldView.SetPlane(0., 0., 1., 0., 0., 0);
+        fieldView.SetArea(-pitch, 0, pitch, 0.02);        
+        cfield->SetLeftMargin(0.16);
+        fieldView.SetCanvas(cfield);
+        fieldView.EnableAutoRange(false,false);
+        fieldView.SetElectricFieldRange(1.e-3,1.e2);
+        //      fieldView.PlotContour();
+    }
+
+    ViewDrift driftView;
+    TCanvas* cd = new TCanvas();
+    if (plotDrift) {
+        aval.EnablePlotting(&driftView);
+        drift.EnablePlotting(&driftView);
+        driftView.SetCollisionMarkerSize(0.0000001);
+        driftView.SetColourIonisations(7);
+        // track.EnablePlotting(&driftView);
+        driftView.SetPlane(0, 0, 1, 0, 0, 0);
+        driftView.SetArea(-pitch, 0, pitch, 0.02);
+        driftView.SetCanvas(cd);
+        constexpr bool twod = true;
+    }
 
   // for each time step
+  int counter = 0;
   for (int step = 0; step < N_timesteps; ++step){
-    if (step == N_timesteps - 1){
-        for (const auto & ion:drift.GetIons()){
-            ion_pos << ion.path.back().y << "\n";
-        }
-    }  
 
     std::cout << "step " << step << "\n";
     electrons_remaining = false;
@@ -316,9 +314,9 @@ int main(int argc, char * argv[]){
 
     particle_count = 0;
     mean_pos = {0.,0.,0.};
-    add_electrons_to_grid(electrons_remaining, zmax);
-    add_ions_to_grid(ions_remaining,zmax);
-    add_negative_ions_to_grid(ions_remaining,zmax);
+    ne = add_electrons_to_grid(electrons_remaining, zmax);
+    ni = add_ions_to_grid(ions_remaining,zmax);
+    ni = ni + add_negative_ions_to_grid(ions_remaining,zmax);
     if(particle_count > 0) avalsc.UpdateMeanPosition(mean_pos[0]/particle_count,mean_pos[1]/particle_count,mean_pos[2]/particle_count);
 
     avalsc.UpdateFieldOnGrid();
@@ -337,18 +335,16 @@ int main(int argc, char * argv[]){
             if (plotDrift){
                 driftView.Plot(true);
                 cd->Update();
-                char filename[50];
-                snprintf(filename, 50, "frames/aval_%03d.png", counter);
+                char filename[100];
+                snprintf(filename, 100, "/afs/cern.ch/work/t/tszwarce/ppp/build/frames/aval_%03d.png", counter);
                 cd->SaveAs(filename);    
-                dfile << filename << std::endl;
             }
             if (plotField){
                 cfield->Clear();
                 fieldView.Plot("e","zcol");
-                char filename[50];
-                snprintf(filename, 50, "frames/field_%03d.png", counter);
+                char filename[100];
+                snprintf(filename, 100, "/afs/cern.ch/work/t/tszwarce/ppp/build/frames/field_%03d.png", counter);
                 cfield->SaveAs(filename);   
-                ffile << filename << std::endl;
             }
             
             counter++; 
@@ -358,18 +354,16 @@ int main(int argc, char * argv[]){
         if (plotDrift){
             driftView.Plot(true);
             cd->Update();
-            char filename[50];
-            snprintf(filename, 50, "frames/aval_%03d.png", counter);
+            char filename[100];
+            snprintf(filename, 100, "/afs/cern.ch/work/t/tszwarce/ppp/build/frames/aval_%03d.png", counter);
             cd->SaveAs(filename); 
-            dfile << filename << std::endl;
         }
         if (plotField){
             cfield->Clear();
             fieldView.Plot("e","zcol");
-            char filename[50];
-            snprintf(filename, 50, "frames/field_%03d.png", counter);
+            char filename[100];
+            snprintf(filename, 100, "/afs/cern.ch/work/t/tszwarce/ppp/build/frames/field_%03d.png", counter);
             cfield->SaveAs(filename);  
-            ffile << filename << std::endl;
         }
         tmin += timestep;
         counter++;
@@ -384,18 +378,16 @@ int main(int argc, char * argv[]){
             if (plotDrift){
                 driftView.Plot(true);
                 cd->Update();
-                char filename[50];
-                snprintf(filename, 50, "frames/aval_%03d.png", counter);
+                char filename[100];
+                snprintf(filename, 100, "/afs/cern.ch/work/t/tszwarce/ppp/build/frames/aval_%03d.png", counter);
                 cd->SaveAs(filename);  
-                dfile << filename << std::endl; 
             }
             if (plotField){
                 cfield->Clear();
                 fieldView.Plot("e","zcol");
-                char filename[50];
-                snprintf(filename, 50, "frames/field_%03d.png", counter);
+                char filename[100];
+                snprintf(filename, 100, "/afs/cern.ch/work/t/tszwarce/ppp/build/frames/field_%03d.png", counter);
                 cfield->SaveAs(filename); 
-                ffile << filename << std::endl;  
             }
             tmin += timestep;
             counter++; 
@@ -406,4 +398,5 @@ int main(int argc, char * argv[]){
         }
     }
   }
+  size << i_dv << "," <<ni << "\n";
 }
