@@ -9,3 +9,5 @@ originals
 ppp/size_no_sc_combined.txt
 ppp/size_sc_combined.txt
 ppp/plots/*
+nogrid/frames/*
+nogrid/frames.tar.gz

@@ -9,6 +9,6 @@ endif()
 
 # ---Build executable------------------------------------------------------------
 
-add_executable(pp pp.C)
-target_link_libraries(pp Garfield::Garfield)
+add_executable(nogrid nogrid.C)
+target_link_libraries(nogrid Garfield::Garfield)
 
