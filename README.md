@@ -7,3 +7,4 @@ Simulation of the space-charge effect in Garfield++
 
 ![Drift lines](./movies/drift_dynamic.gif)
 ![Space charge field](./movies/field_dynamic.gif)
+![Profile](./movies/axisscan.gif)
