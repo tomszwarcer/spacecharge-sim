@@ -1,0 +1,8 @@
+executable              = run.sh
+    arguments               = $(ProcId) $(dv)
+    output                  = Output/job.$(ClusterId).$(ProcId).out
+    error                   = Output/job.$(ClusterId).$(ProcId).err
+    log                     = Output/job.$(ClusterId).log
+
++JobFlavour = "workday"
+queue ProcID,dv from all_runs.txt

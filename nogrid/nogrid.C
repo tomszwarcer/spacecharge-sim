@@ -46,13 +46,12 @@
 
 using namespace Garfield;
 
-// Create ions
 AvalancheMC drift;
-
 AvalancheMicroscopic aval;
+
 // set time window parameters
 double tmin = 0.;
-double timestep = 0.025;
+double timestep = 0.05;
 
 std::vector<double> mean_pos = {0.,0.,0.};
 int particle_count = 0;
@@ -79,7 +78,7 @@ std::array<int,3> get_mean(bool & electrons_remaining, bool & ions_remaining, co
         int status = electron.status;
         // if still in a drift medium or at the end of timestep:
         if (status==0 || status == -17){
-	        ne++;
+	      ne++;
           electrons_remaining = true;
           if (yf < zmax){
               particle_count++;
@@ -97,7 +96,7 @@ std::array<int,3> get_mean(bool & electrons_remaining, bool & ions_remaining, co
         int status = ion.status;
         // if still in a drift medium or at the end of timestep:
         if (status==0 || status == -17){
-	        ni++;
+	      ni++;
           ions_remaining = true;
           if (yf < zmax){
               particle_count++;
@@ -115,7 +114,7 @@ std::array<int,3> get_mean(bool & electrons_remaining, bool & ions_remaining, co
         int status = ion.status;
         // if still in a drift medium or at the end of timestep:
         if (status==0 || status == -17){
-	        nNi++;
+	      nNi++;
           ions_remaining = true;
           if (yf < zmax){
               particle_count++;
@@ -131,12 +130,19 @@ std::array<int,3> get_mean(bool & electrons_remaining, bool & ions_remaining, co
 int main(int argc, char * argv[]) {
   
   // Check if the right number of arguments are provided
-  if (argc != 2) {
-    std::cerr << "Usage: " << argv[0] << " <process_index>" << std::endl;
+  if (argc != 3) {
+    std::cerr << "Usage: " << argv[0] << " <process_index> <voltage>" << std::endl;
     return 1;
   }
 
-  std::ofstream outfile("outfile.txt");
+  int run_number = std::atoi(argv[1]);
+  std::string s_run_number = argv[1];
+  int i_dv = std::atoi(argv[2]);
+  double dv = std::atof(argv[2]);
+  std::string s_dv = std::to_string(i_dv);
+  dv = -1*dv;
+  s_dv = "_"+s_dv;
+  std::ofstream size;
   
   bool plotting = false;
   // Convert the process index argument to an integer
@@ -155,25 +161,27 @@ int main(int argc, char * argv[]) {
   gas.SetPressure(760.); // [Torr]
   gas.LoadIonMobility("IonMobility_Ar+_Ar.txt");
   gas.Initialise(true);
-  
   gas.EnablePenningTransfer(); // Penning effect. This I forgot to explain... [1]
   
   // Add parallel plate geometry for space-charge
   const double posBottomPlane = 0.; // cm
   const double posTopPlane = 128.e-4; // cm
-  const double voltage = -700; // V
+  const double voltage = -500; // V
   
   ComponentAnalyticField mm; // Micromegas field
   mm.SetMedium(&gas);
   mm.AddPlaneY(posBottomPlane, 0.);
-  mm.AddPlaneY(posTopPlane, voltage);
+  mm.AddPlaneY(posTopPlane, dv);
 
   aval.SetUserHandleIonisation(userHandleIonisation);
   aval.SetUserHandleAttachment(userHandleAttachment);
   
   ComponentChargedRing rings;
   rings.SetArea(-0.02,posBottomPlane,-0.02,0.02,posTopPlane,0.02);
-  rings.SetSpacingTolerance(0.00001);
+  double sft = 0.00001;
+  double st = 0.00005;
+  rings.SetSpacingTolerance(st);
+  rings.SetSelfFieldTolerance(sft);
   rings.SetMedium(&gas);
   
   // Create the sensor
@@ -187,9 +195,20 @@ int main(int argc, char * argv[]) {
   drift.SetSensor(&sensor);
 
   const bool enableDebug = false;
-  const bool enableSpaceCharge = true;
-  const bool plotField = (true && enableSpaceCharge);
-  const bool plotDrift = true;
+  const bool enableSpaceCharge = false;
+  const bool plotField = false;
+  const bool plotDrift = false;
+
+  std::string path_end = ".txt";
+  if (enableSpaceCharge){
+      std::string path_begin = "/afs/cern.ch/work/t/tszwarce/nogrid/gain_output/on/size_sc_";
+    
+      size.open(path_begin+s_run_number+s_dv+path_end);
+  }
+  else{
+      std::string path_begin = "/afs/cern.ch/work/t/tszwarce/nogrid/gain_output/off/size_no_sc_";
+      size.open(path_begin+s_run_number+s_dv+path_end);
+  }   
 
   if (enableDebug) { 
     rings.EnableDebugging();
@@ -210,7 +229,7 @@ int main(int argc, char * argv[]) {
     cfield->SetLeftMargin(0.16);
     fieldView.SetCanvas(cfield);
     fieldView.EnableAutoRange(false,false);
-    fieldView.SetElectricFieldRange(0.,75.);
+    fieldView.SetElectricFieldRange(0.,40.);
   }
 
   ViewDrift driftView;
@@ -231,17 +250,16 @@ int main(int argc, char * argv[]) {
   
   double midpt = (posTopPlane - posBottomPlane)/2;
   const double x0 = 0.; // cm
-  double y0 = midpt*1.2;
+  double y0 = 120.e-4;
   const double z0 = 0.; // cm
   const double t0 = 0.; // ns
   const double e0 = 0.1; // eV
 
-  const unsigned int nFrames = 40; 
+  const unsigned int nFrames = 30; 
 
-  aval.AddElectron(x0,y0,z0,0.,0.); 
+  aval.AddElectron(x0,y0,z0,0.,0.1); 
 
   std::array<int,3> particles;
-
 
   for (unsigned int iF = 0; iF < nFrames; ++iF) {
 
@@ -337,6 +355,7 @@ int main(int argc, char * argv[]) {
         }
         if (plotField){
             cfield->Clear();
+            //fieldView.PlotProfile(meanX,posBottomPlane,meanZ,meanX,posTopPlane,meanZ,"ey");
             fieldView.Plot("e","zcol");
             char filename[100];
             snprintf(filename, 100, "/afs/cern.ch/work/t/tszwarce/nogrid/build/frames/field_%03d.png", iF);
@@ -345,6 +364,8 @@ int main(int argc, char * argv[]) {
         tmin += timestep;
     }
     else{
+        std::cout << particles[0] << "\n";
+        break;
         if (ions_remaining){
             std::cout << "MC\n";
             drift.SetTimeWindow(tmin, tmin + timestep);
@@ -375,7 +396,6 @@ int main(int argc, char * argv[]) {
 
 
   }
-  outfile.close();
-  
+  size << i_dv << "," << particles[1] - particles[2] << "\n";  
   LOG("Script: Done.\n");
 }
