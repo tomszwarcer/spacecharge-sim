@@ -1,6 +1,6 @@
 import numpy as np
 
-voltages = [550]
+voltages = [660]
 
 # Example data (non-normal distributions)
 infileoff = open("/Users/tomszwarcer/Documents/CERN/spacecharge-sim/nogrid/size_no_sc_combined.txt")

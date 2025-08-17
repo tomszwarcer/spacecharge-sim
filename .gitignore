@@ -11,3 +11,9 @@ ppp/size_sc_combined.txt
 ppp/plots/*
 nogrid/frames/*
 nogrid/frames.tar.gz
+elliptic/
+singlering/
+nogrid/*.txt
+!nogrid/size_sc_combined.txt
+!nogrid/size_no_sc_combined.txt
+
