@@ -16,4 +16,7 @@ singlering/
 nogrid/*.txt
 !nogrid/size_sc_combined.txt
 !nogrid/size_no_sc_combined.txt
-
+axisscan-grid/comparison/*
+axisscan-grid/build/*
+timestep_scan/*
+axisscan/

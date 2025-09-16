@@ -170,7 +170,7 @@ int main(int argc, char * argv[]) {
   drift.SetSensor(&sensor);
 
   const bool enableDebug = false;
-  const bool enableSpaceCharge = true;
+  const bool enableSpaceCharge = false;
   const bool plotField = false;
   const bool plotDrift = false;
 
@@ -201,7 +201,8 @@ int main(int argc, char * argv[]) {
   
   double midpt = (posTopPlane - posBottomPlane)/2;
   const double x0 = 0.; // cm
-  double y0 = 127.9e-4;
+  //double y0 = 127.9e-4;
+  double y0 = 60e-4;
   const double z0 = 0.; // cm
   const double t0 = 0.; // ns
   const double e0 = 0.1; // eV

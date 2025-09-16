@@ -1,8 +1,7 @@
 # spacecharge-sim
 Simulation of the space-charge effect in Garfield++ 
 
-- For use with GridBasedSpaceCharge branch of Garfield++, which can be found at https://gitlab.cern.ch/garfield/garfieldpp/-/tree/GridBasedSpaceCharge?ref_type=heads
-
+More information can be found [here.](https://tomszwarcer.github.io/assets/seminar_spacecharge_szwarcer.pptx)
 
 ![Drift lines](./movies/drift_dynamic.gif)
 ![Space charge field](./movies/field_dynamic.gif)
