@@ -20,3 +20,10 @@ axisscan-grid/comparison/*
 axisscan-grid/build/*
 timestep_scan/*
 axisscan/
+nogrid/batch.sub
+nogrid/file_combiner.py
+nogrid/generate_args.py
+nogrid/image_combiner.py
+nogrid/permutation_test.py
+nogrid/run.sh
+nogrid/time_analysis.ipynb
