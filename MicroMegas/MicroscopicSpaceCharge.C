@@ -1,6 +1,7 @@
 #include <TApplication.h>
 #include <TCanvas.h>
 #include "Garfield/ViewDrift.hh"
+#include "Garfield/ViewField.hh"
 
 #include <array>
 #include <iostream>
@@ -37,6 +38,9 @@ bool enableResistiveAnode;
 bool enableSpaceCharge;
 bool enableDebug;
 
+
+int current_system_index = 0;
+
 struct System {
 
   // One System object for each ring system
@@ -55,58 +59,32 @@ struct System {
   System(MediumMagboltz * gas) {
 
     // setup
-    rings.SetArea(-0.1, posBottomPlane, -0.1, 0.1, posTopPlane, 0.1);
-    rings.SetMedium(gas);
-    if (enableResistiveAnode) {
-      anode_rings.SetArea(-0.1,posBottomPlane,-0.1,0.1,posTopPlane,0.1);
-      anode_rings.SetMedium(gas);
-    }
     if (enableDebug) {
-      rings.EnableDebugging();
-      anode_rings.EnableDebugging();
-      grid.EnableDebugging();
+      //rings.EnableDebugging();
+      //anode_rings.EnableDebugging();
+      //grid.EnableDebugging();
       aval.EnableDebugging();
       drift.EnableDebugging();
     }
-    grid.SetArea(-0.1,posBottomPlane,-0.1,0.1,posTopPlane,0.1);
-    grid.Set2dGrid(posBottomPlane,posTopPlane,200,0.1,80);
-    grid.SetMedium(gas);
+
+    if (enableSpaceCharge) {
+      sensor.AddComponent(&grid);
+      grid.SetArea(-0.1,posBottomPlane,-0.1,0.1,posTopPlane,0.1);
+      grid.Set2dGrid(posBottomPlane,posTopPlane,200,0.1,80);
+      grid.SetMedium(gas);
+      rings.SetArea(-0.1, posBottomPlane, -0.1, 0.1, posTopPlane, 0.1);
+      rings.SetMedium(gas);
+      if (enableResistiveAnode) {
+        anode_rings.SetArea(-0.1,posBottomPlane,-0.1,0.1,posTopPlane,0.1);
+        anode_rings.SetMedium(gas);
+      }
+    }
 
     aval.SetSensor(&sensor);
-    aval.SetUserHandleIonisation(userHandleIonisation_s);
-    aval.SetUserHandleAttachment(userHandleAttachment_s);
     drift.SetSensor(&sensor);
-
-    
-    if (enableSpaceCharge) sensor.AddComponent(&grid);
   }
 
-
-  // we have to wrap the user handles in static functions
-  static void userHandleIonisation_s(double x, double y, double z, double t, int type,
-                          int level, Medium* m) {
-    void userHandleIonisation(double x, double y, double z, double t, int type,
-                              int level, Medium* m);                        
-  }
-
-  void userHandleIonisation(double x, double y, double z, double t, int type,
-                              int level, Medium* m) {
-    drift.AddIon(x, y, z, tmin + timestep);  // ion added at the start of the next timestep
-  }
-
-  static void userHandleAttachment_s(double x, double y, double z, double t, int type,
-                          int level, Medium* m) {
-    void userHandleAttachment(double x, double y, double z, double t, int type,
-                              int level, Medium* m);
-  }
-
-  void userHandleAttachment(double x, double y, double z, double t, int type,
-                            int level, Medium* m) {
-    drift.AddNegativeIon(x, y, z, tmin + timestep);  // ion added at the start of the next timestep
-  }
-  
-
-  void add_electrons() {
+  void add_electron_rings() {
     // update mean position and add rings
 
     for (const auto& electron : aval.GetElectrons()) {
@@ -135,7 +113,7 @@ struct System {
     }
   }
 
-  void add_ions() {
+  void add_ion_rings() {
     // update mean position and add rings
 
     for (const auto& ion : drift.GetIons()) {
@@ -173,8 +151,8 @@ struct System {
   void get_mean() {
     mean_pos = {0., 0., 0.};
     particle_counts = {0, 0, 0};
-    add_electrons();
-    add_ions();
+    add_electron_rings();
+    add_ion_rings();
     n_particles = particle_counts[0] + particle_counts[1] + particle_counts[2];
     for (int j = 0; j < 3; ++j) {
       mean_pos[j] /= (double)n_particles;
@@ -182,6 +160,17 @@ struct System {
   }
 
 };
+
+std::vector<System> systems;
+
+void userHandleIonisation(double x, double y, double z, double t, int type,
+                            int level, Medium* m) {
+  systems[current_system_index].drift.AddIon(x, y, z, tmin + timestep);  // ion added at the start of the next timestep
+}
+void userHandleAttachment(double x, double y, double z, double t, int type,
+                          int level, Medium* m) {
+  systems[current_system_index].drift.AddNegativeIon(x, y, z, tmin + timestep);  // ion added at the start of the next timestep
+}
 
 void add_initial_electrons(std::string gasfile_path, double ex, double ey, double ez,std::vector<std::array<double,4>> & start_coords) {
   double vx,vy,vz; // drift velocities
@@ -291,6 +280,16 @@ int main(int argc, char* argv[]) {
   sensor.AddComponent(&fm);
 
   enableDebug = false;
+  bool plotDrift = true;
+
+  // Plot drift lines
+  ViewDrift driftView;
+  if (plotDrift) {
+    driftView.SetCollisionMarkerSize(0.0000000000000000001);
+    driftView.SetColourIonisations(7);
+    driftView.SetPlane(0, 0, 1, 0, 0, 0);
+    driftView.SetArea(-0.03, posBottomPlane, 0.03, posTopPlane);
+  }
 
   // setup the file for exporting the gain
   if (enableSpaceCharge){
@@ -314,8 +313,6 @@ int main(int argc, char* argv[]) {
   add_initial_electrons(gasfile_path,ex,ey,ez,start_coords);
 
   int frame_number = -1;
-
-  std::vector<System> systems;
   bool electrons_remaining;
 
   // main loop
@@ -330,9 +327,17 @@ int main(int argc, char* argv[]) {
     // add starting electrons
     for (const std::array<double,4> coords : start_coords) {
       if ((tmin <= coords[3]) && (coords[3] < tmin + timestep)) {
-        std::cout << "Adding electron " << num_electrons_added << " of " << num_initial_electrons << " at t = " << coords[3] << "\n";
+        std::cout << "Adding electron " << num_electrons_added << " of " << num_initial_electrons - 1 << " at t = " << coords[3] << "\n";
         // increase the size of the ring system vectors
         systems.emplace_back(&gas);
+        // set up user handles
+        systems.back().aval.SetUserHandleIonisation(userHandleIonisation);
+        systems.back().aval.SetUserHandleAttachment(userHandleAttachment);
+        // set up plotting
+        if (plotDrift) {
+          systems.back().aval.EnablePlotting(&driftView);
+          systems.back().drift.EnablePlotting(&driftView);
+        }
         // add the electron to the last ring system
         systems.back().aval.AddElectron(coords[0],coords[1],coords[2],coords[3],0.1);
         num_electrons_added++;
@@ -340,8 +345,10 @@ int main(int argc, char* argv[]) {
     }
 
     int counter = 0;
-    for (System system : systems) {
+    for (System & system : systems) {
 
+      if (enableSpaceCharge) sensor.EnableMagneticField(counter + 1,false); // When I remove this, it crashes... don't know why.
+      current_system_index = counter;
       system.rings.ClearActiveRings();
       system.get_mean();
 
@@ -349,26 +356,26 @@ int main(int argc, char* argv[]) {
                 << ", i+: " << system.particle_counts[1]
                 << ", i-: " << system.particle_counts[2] << "\n";
 
+
+
       // update symmetry axis          
       if (system.n_particles > 0 && enableSpaceCharge) {
         system.rings.UpdateCentre(system.mean_pos[0], system.mean_pos[2]);
-        system.rings.UpdateCentre(system.mean_pos[0], system.mean_pos[2]);
+        system.anode_rings.UpdateCentre(system.mean_pos[0], system.mean_pos[2]);
         system.grid.UpdateCentre(system.mean_pos[0], system.mean_pos[2]);
 
         size_t nr;
-        for (System system : systems) {
-          nr = system.rings.GetNumberOfRings();
-          std::cout << nr << " rings in system " << counter << ".\nAdding fields of system " << counter << " to grid...\n";
+        nr = system.rings.GetNumberOfRings();
+        std::cout << nr << " rings in system " << counter << ".\nAdding fields of system " << counter << " to grid...\n";
 
-          // add ring fields to grid
-          system.grid.AddElectricField(&system.rings);
+        // add ring fields to grid
+        system.grid.AddElectricField(&system.rings);
 
-          if (enableResistiveAnode) {
-            std::cout << system.n_anode_electrons << " electrons at anode system " << counter << "\nAdding anode fields of system " << counter << " to grid...\n";
-            
-            // add anode ring fields to grid
-            system.grid.AddElectricField(&system.anode_rings);
-          }
+        if (enableResistiveAnode) {
+          std::cout << system.n_anode_electrons << " electrons at anode system " << counter << "\nAdding anode fields of system " << counter << " to grid...\n";
+          
+          // add anode ring fields to grid
+          system.grid.AddElectricField(&system.anode_rings);
         }
       }
       electrons_remaining = false;
@@ -379,16 +386,19 @@ int main(int argc, char* argv[]) {
         system.aval.SetTimeWindow(tmin, tmin + timestep);
         system.aval.ResumeAvalanche();
         electrons_remaining = true;
+        std::cout << "    AvalancheMicroscopic done.\n";
 
         if (system.particle_counts[1] > 0 || system.particle_counts[2] > 0) {
           std::cout << "    Simulating ions for ring system " << counter << ": AvalancheMC...\n";
           system.drift.SetTimeWindow(tmin, tmin + timestep);
           system.drift.ResumeAvalanche();
+          std::cout << "    AvalancheMC done.\n";
         }
       }
       counter++;
     }
-    if (electrons_remaining == false) {
+    // if we've gone through all the systems and there's no electrons
+    if (electrons_remaining == false && counter == num_initial_electrons) {
       std::cout << "\nNo electrons remaining: done.\n";
       break;
     }
@@ -399,7 +409,7 @@ int main(int argc, char* argv[]) {
   int gain_temp = 0;
   int counter = 0;
   std::cout << "Particles in the simulation:\n";
-  for (System system : systems) {
+  for (System & system : systems) {
     system.get_mean();
     std::cout << "    Ring system " << counter << ":\ne-: " << system.particle_counts[0]
               << ", i+: " << system.particle_counts[1]
@@ -423,19 +433,7 @@ int main(int argc, char* argv[]) {
     collisions << n_coll << "," << ngas << "," << e << "," << descr << "\n";
   }
 
-
-  // Plot drift lines
-  ViewDrift driftView;
-  if (1) {
-    for (System system : systems) {
-      system.aval.EnablePlotting(&driftView);
-      system.drift.EnablePlotting(&driftView);
-    }
-    driftView.SetCollisionMarkerSize(0.0000000000000000001);
-    driftView.SetColourIonisations(7);
-    driftView.SetPlane(0, 0, 1, 0, 0, 0);
-    driftView.SetArea(-0.03, posBottomPlane, 0.03, posTopPlane);
-    constexpr bool twod = true;
+  if (plotDrift) {
     TCanvas* cd = new TCanvas();
     driftView.SetCanvas(cd);
     driftView.Plot(true);
