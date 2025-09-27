@@ -60,18 +60,18 @@ struct System {
 
     // setup
     if (enableDebug) {
-      //rings.EnableDebugging();
-      //anode_rings.EnableDebugging();
-      //grid.EnableDebugging();
+      rings.EnableDebugging();
+      anode_rings.EnableDebugging();
+      grid.EnableDebugging();
       aval.EnableDebugging();
       drift.EnableDebugging();
     }
 
     if (enableSpaceCharge) {
-      sensor.AddComponent(&grid);
       grid.SetArea(-0.1,posBottomPlane,-0.1,0.1,posTopPlane,0.1);
       grid.Set2dGrid(posBottomPlane,posTopPlane,200,0.1,80);
       grid.SetMedium(gas);
+      sensor.AddComponent(&grid);
       rings.SetArea(-0.1, posBottomPlane, -0.1, 0.1, posTopPlane, 0.1);
       rings.SetMedium(gas);
       if (enableResistiveAnode) {
@@ -93,16 +93,15 @@ struct System {
       double yf = electron.path.back().y;
       double zf = electron.path.back().z;
       int status = electron.status;
-      // if at the end of timestep and within the region of interest:
-      // status == 0 allows for the first electron to be added
       if (status == -5 && yf < anode_pos && enableResistiveAnode) {
         n_anode_electrons++;
-        particle_counts[0]++;
         mean_pos[0] += xf;
         mean_pos[1] += yf;
         mean_pos[2] += zf;
         if (enableSpaceCharge) anode_rings.AddChargedRing(xf,0.,zf,-1);
       }
+      // if at the end of timestep and within the region of interest:
+      // status == 0 allows for the first electron to be added
       if (status == 0 || status == -17) {
         particle_counts[0]++;
         mean_pos[0] += xf;
@@ -203,7 +202,7 @@ void add_initial_electrons(std::string gasfile_path, double ex, double ey, doubl
   std::normal_distribution<double> position_norm_dist(0.,transverse_sd);
   const double y0 = 150e-4; // cm
   const double e0 = 0.1; // eV
-  const int N_electrons = 2; // 212 for Fe-55
+  const int N_electrons = 5; // 212 for Fe-55
 
   // draw from the distributions
   for (int run_counter = 0; run_counter < N_electrons; ++run_counter) {
@@ -222,6 +221,9 @@ void add_initial_electrons(std::string gasfile_path, double ex, double ey, doubl
     else {std::cout << "Electron " << run_counter << " is not in a valid medium\n";}
   }
   std::cout << num_initial_electrons << " electrons will be added\nFirst electron arrives at t = " << tmin << "ns\n";
+  // reserve space for system vector to prevent issues with resizing
+  systems.reserve(num_initial_electrons);
+
   // make the first time window just before the first electron arrives
   tmin = tmin - 0.01 * timestep;
 }
@@ -281,14 +283,24 @@ int main(int argc, char* argv[]) {
 
   enableDebug = false;
   bool plotDrift = true;
+  bool plotField = true;
 
   // Plot drift lines
   ViewDrift driftView;
   if (plotDrift) {
     driftView.SetCollisionMarkerSize(0.0000000000000000001);
     driftView.SetColourIonisations(7);
-    driftView.SetPlane(0, 0, 1, 0, 0, 0);
-    driftView.SetArea(-0.03, posBottomPlane, 0.03, posTopPlane);
+    driftView.SetPlane(0., 0., 1., 0., 0., 0.);
+    driftView.SetArea(-0.05, posBottomPlane, 0.05, posTopPlane);
+  }
+
+  // Plot field
+  ViewField fieldView;
+  if (plotField) {
+    fieldView.SetSensor(&sensor);
+    // Set the normal vector of the viewing plane (xz plane).
+    fieldView.SetPlane(0., 0., 1., 0., 0., 0);
+    fieldView.SetArea(-0.05, posBottomPlane, 0.05, posTopPlane);
   }
 
   // setup the file for exporting the gain
@@ -311,6 +323,18 @@ int main(int argc, char* argv[]) {
   sensor.ElectricField(0.,0.15 + posTopPlane,0.,ex,ey,ez,m,stat);
   int num_electrons_added = 0;
   add_initial_electrons(gasfile_path,ex,ey,ez,start_coords);
+
+  ////////// debug: comment the above line and force electrons to start where we want them
+  /*
+  num_initial_electrons = 4;
+  systems.reserve(num_initial_electrons);
+  start_coords.push_back({-0.02,0.0127,0.,0.025});
+  start_coords.push_back({0.02,0.0127,0.,0.025});
+  start_coords.push_back({-0.007,0.0127,0.,0.06});
+  start_coords.push_back({0.007,0.0127,0.,0.11});
+  tmin = 0.; 
+  */
+  //////////
 
   int frame_number = -1;
   bool electrons_remaining;
@@ -339,12 +363,15 @@ int main(int argc, char* argv[]) {
           systems.back().drift.EnablePlotting(&driftView);
         }
         // add the electron to the last ring system
+        systems.back().rings.UpdateCentre(coords[0],coords[2]);
+        systems.back().grid.UpdateCentre(coords[0],coords[2]);
         systems.back().aval.AddElectron(coords[0],coords[1],coords[2],coords[3],0.1);
         num_electrons_added++;
       }
     }
 
     int counter = 0;
+    electrons_remaining = false;
     for (System & system : systems) {
 
       if (enableSpaceCharge) sensor.EnableMagneticField(counter + 1,false); // When I remove this, it crashes... don't know why.
@@ -352,33 +379,34 @@ int main(int argc, char* argv[]) {
       system.rings.ClearActiveRings();
       system.get_mean();
 
-      std::cout << "    Ring system " << counter << ":\n    e-: " << system.particle_counts[0]
+      std::cout << "Ring system " << counter << ":\n    e-: " << system.particle_counts[0]
                 << ", i+: " << system.particle_counts[1]
-                << ", i-: " << system.particle_counts[2] << "\n";
+                << ", i-: " << system.particle_counts[2] 
+                << ", mean: ("<< system.mean_pos[0] << "," << system.mean_pos[2] << ")\n";
 
 
 
       // update symmetry axis          
       if (system.n_particles > 0 && enableSpaceCharge) {
+        std::cout << "    Updating centres for ring system " << counter << "...\n";
         system.rings.UpdateCentre(system.mean_pos[0], system.mean_pos[2]);
         system.anode_rings.UpdateCentre(system.mean_pos[0], system.mean_pos[2]);
         system.grid.UpdateCentre(system.mean_pos[0], system.mean_pos[2]);
 
         size_t nr;
         nr = system.rings.GetNumberOfRings();
-        std::cout << nr << " rings in system " << counter << ".\nAdding fields of system " << counter << " to grid...\n";
+        std::cout << "    " << nr << " rings in system " << counter << ".\n   Adding fields of system " << counter << " to grid...\n";
 
         // add ring fields to grid
         system.grid.AddElectricField(&system.rings);
 
         if (enableResistiveAnode) {
-          std::cout << system.n_anode_electrons << " electrons at anode system " << counter << "\nAdding anode fields of system " << counter << " to grid...\n";
+          std::cout << system.n_anode_electrons << " electrons at anode system " << counter << "\n    Adding anode fields of system " << counter << " to grid...\n";
           
           // add anode ring fields to grid
           system.grid.AddElectricField(&system.anode_rings);
         }
       }
-      electrons_remaining = false;
 
       // main simulation
       if (system.particle_counts[0] > 0) {
@@ -437,6 +465,15 @@ int main(int argc, char* argv[]) {
     TCanvas* cd = new TCanvas();
     driftView.SetCanvas(cd);
     driftView.Plot(true);
+    cd->SaveAs("drift.pdf");
+  }
+  if (plotField) {
+    TCanvas* cfield = new TCanvas("cfield", "", 600, 600);
+    sensor.EnableComponent(0,false);
+    fieldView.SetCanvas(cfield);
+    cfield->SetLeftMargin(0.16);
+    fieldView.Plot("e", "zcol");
+    cfield->SaveAs("field.pdf");
   }
   app.Run(true);
 }
